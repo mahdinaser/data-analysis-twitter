@@ -1,0 +1,122 @@
+library(tm)
+library(ggplot2)
+library(lsa)
+library(twitteR)
+library(class)
+library(e1071)
+
+
+consumer_key <- "YRAvjFDwiu5h8YsluLT1SxTDi"
+consumer_secret <- "OWiImz1h6JcpBetu2tf1ffw9fzsgDnFDdbmsQvc16BOts7gFg5"
+access_token <- "734595186513305600-gqZvqC5DnA6zI1pf8pva3pzijBPxnCM"
+access_secret <- "ua9JcXDT2RnM7ifVspnd1e8e36CM7Q2AORp0H0qA5bQfV"
+setup_twitter_oauth(consumer_key, consumer_secret, access_token, access_secret)
+
+tweets <- searchTwitter("HARVEY OR 'TROPICAL DEPRESSION HARVEY' OR #HARVEY", n=1000, lang="en", since="2017-08-26")
+secondTweets <- searchTwitter("SiriusXM OR #SXM", n=1000, lang="en", since="2017-08-26")
+
+
+secondTweets.df <- twListToDF(secondTweets)
+secondTweets.df$catetory="OTHERS"
+
+tweets.df <- twListToDF(tweets)
+tweets.df$catetory="HARVEY"
+
+# mixed all the data togather
+total <- rbind(tweets.df, secondTweets.df)
+
+# shuffle the data 
+total <- total[sample(nrow(total)),]
+
+# start to create a corpus and clean the data
+corpus <- Corpus(VectorSource(total$text))
+corpus <- tm_map(corpus, stemDocument, language = "english")
+corpus <- tm_map(corpus, removePunctuation)
+corpus <- tm_map(corpus, function(x) removeWords(x, stopwords("english")))
+corpus <- tm_map(corpus, tolower)
+
+# corpus  # check corpu
+
+dtm <- as.matrix( DocumentTermMatrix(corpus))
+
+mat.df <- as.data.frame(data.matrix(dtm), stringsAsfactors = FALSE)
+
+# Column bind category
+mat.df <- cbind(mat.df, total$catetory)
+colnames(mat.df)[ncol(mat.df)] <- "category"
+
+train <- sample(nrow(mat.df), ceiling(nrow(mat.df) * .70))
+test <- (1:nrow(mat.df))[- train]
+
+
+cl <- mat.df[, "category"]
+
+# Create model data and remove "category"
+modeldata <- mat.df[,!colnames(mat.df) %in% "category"]
+
+# Create model: training set, test set, training set classifier
+knn.pred <- knn(modeldata[train, ], modeldata[test, ], cl[train],k=3)
+
+# Confusion matrix
+conf.mat <- table("Predictions" = knn.pred, Actual = cl[test])
+conf.mat
+
+falsePositive = conf.mat[1,2]
+falseNegative = conf.mat[2,1]
+truePositive  = conf.mat[1,1]
+
+Precison = truePositive/(truePositive+falsePositive)
+Recall   = truePositive/(truePositive+falseNegative)
+FScore   = 2 * (Precison*Recall)/(Precison+Recall)
+
+cat("Precison KNN\n" , Precison)
+cat("Recall KNN\n",Recall)
+cat("F-Score KNN\n",FScore)
+
+
+#plot(knn.pred,cl[test])
+
+# dist.mat <- dist(t(as.matrix(td.mat)))
+# #dist.mat  # check distance matrix
+# 
+# write.csv(as.matrix(dist.mat),"textSimilarityBasedOnTermDocumentMatrix.csv")
+# 
+# 
+# td.mat.lsa <- lw_bintf(td.mat) * gw_idf(td.mat)  # weighting
+# lsaSpace <- lsa(td.mat.lsa)  # create LSA space
+# dist.mat.lsa <- dist(t(as.textmatrix(lsaSpace)))  # compute distance matrix
+# write.csv(as.matrix(dist.mat.lsa),"textSimilarityBasedOnLSA.csv")
+
+
+
+
+#Fit a model. The function syntax is very similar to lm function
+x = modeldata[train, ]
+y = cl[train]
+
+svm_tune <- tune(svm, train.x=x, train.y=y, kernel="radial", ranges=list(cost=10^(-1:2), gamma=c(.5,1,2)))
+
+plot(svm_tune, transform.x = log2, transform.y = log2)
+#plot(svm_tune, type = "perspective", theta = 120, phi = 45)
+
+#svm_model1 <- svm(x,y)
+svm_model1 <- svm(x,y, cost=1, gamma=0.5)
+summary(svm_model1)
+
+#Use the predictions on the data
+pred <- predict(svm_model1,modeldata[test, ])
+conf2 = table(pred,cl[test])
+conf2
+
+falsePositive = conf2[1,2]
+falseNegative = conf2[2,1]
+truePositive  = conf2[1,1]
+
+Precison = truePositive/(truePositive+falsePositive)
+Recall   = truePositive/(truePositive+falseNegative)
+FScore   = 2 * (Precison*Recall)/(Precison+Recall)
+
+cat("SVM Precison " , Precison)
+cat("SVM Recall ",Recall)
+cat("SVM F-Score ",FScore)
+
